@@ -1,0 +1,9 @@
+web/
+.github/
+db/
+__pycache__/
+**/__pycache__/
+*.pyc
+.env*
+*.md
+sbr-stats.xlsx

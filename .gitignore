@@ -1,0 +1,29 @@
+# Data (private — bind-mounted in production)
+sbr-stats.xlsx
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+
+# Node / Frontend
+web/node_modules/
+web/dist/
+
+# Docker volumes
+db_data/
+
+# Claude Code local settings
+.claude/
+
+# Editor
+.idea/
+.vscode/
+*.swp

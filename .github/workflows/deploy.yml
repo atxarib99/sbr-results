@@ -1,0 +1,47 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build
+        working-directory: web
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          # Set VITE_BASE_PATH to /repo-name/ if deploying to a GitHub Pages project site
+          # Leave empty for a user/org pages site (username.github.io)
+          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/' }}
+        run: npm run build
+
+      - name: Copy 404.html for SPA routing
+        working-directory: web
+        run: cp dist/index.html dist/404.html
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: web/dist
+          force_orphan: true
