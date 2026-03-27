@@ -18,6 +18,7 @@ app = FastAPI(
     title="SBR Stats API",
     description="Sim racing league results API",
     version="1.0.0",
+    root_path="/sbr-results",
     lifespan=lifespan,
 )
 

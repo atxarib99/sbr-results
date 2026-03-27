@@ -1,44 +1,18 @@
 services:
 
-  db:
-    image: mariadb:11.3
-    restart: unless-stopped
-    environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
-      MARIADB_DATABASE:      ${DB_NAME:-sbr}
-      MARIADB_USER:          ${DB_USER:-sbr}
-      MARIADB_PASSWORD:      ${DB_PASSWORD:-sbr}
-    volumes:
-      - db_data:/var/lib/mysql
-      # Schema and seed run once on first boot (when db_data volume is empty).
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./db/seed_config.sql:/docker-entrypoint-initdb.d/02_seed_config.sql:ro
-    ports:
-      - "3306:3306"
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
   api:
     build: .
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "8002:8002"
     environment:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
-      - DB_HOST=db
+      - DB_HOST=host.docker.internal
       - DB_PORT=3306
-      - DB_USER=${DB_USER:-sbr}
-      - DB_PASSWORD=${DB_PASSWORD:-sbr}
-      - DB_NAME=${DB_NAME:-sbr}
+      - DB_USER=${DB_USER:-arib}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-default_db}
     volumes:
       - ./sbr-stats.xlsx:/app/sbr-stats.xlsx:ro
-
-volumes:
-  db_data:

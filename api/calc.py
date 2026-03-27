@@ -168,6 +168,7 @@ def compute_season_data(
             "podiums": podiums,
             "dns":     dns_count,
             "total":   total_display,
+            "rounds":  rounds_out,
             "_sort_key": _sort_key(total_pts, score_type, points_map, rounds_by_num),
         })
 

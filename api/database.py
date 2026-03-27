@@ -3,15 +3,23 @@ from __future__ import annotations
 
 import os
 
+from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 _USER     = os.getenv("DB_USER",     "sbr")
 _PASSWORD = os.getenv("DB_PASSWORD", "sbr")
 _HOST     = os.getenv("DB_HOST",     "localhost")
-_PORT     = os.getenv("DB_PORT",     "3306")
+_PORT     = int(os.getenv("DB_PORT", "3306"))
 _NAME     = os.getenv("DB_NAME",     "sbr")
 
-DATABASE_URL = f"mysql+aiomysql://{_USER}:{_PASSWORD}@{_HOST}:{_PORT}/{_NAME}"
+DATABASE_URL = URL.create(
+    drivername="mysql+aiomysql",
+    username=_USER,
+    password=_PASSWORD,
+    host=_HOST,
+    port=_PORT,
+    database=_NAME,
+)
 
 engine = create_async_engine(
     DATABASE_URL,
