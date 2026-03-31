@@ -83,15 +83,24 @@ class SeasonSummary(BaseModel):
     champion: Optional[str]
 
 
+class ClassStandings(BaseModel):
+    class_name: str
+    champion: Optional[str]
+    standings: List[DriverStanding]
+    race_winners: List[Dict[str, Any]]
+
+
 class SeasonDetail(BaseModel):
     name: str
     display_name: str
     race_format: str
     score_type: str
     num_rounds: int
+    is_multiclass: bool
     champion: Optional[str]
     standings: List[DriverStanding]
     race_winners: List[Dict[str, Any]]
+    classes: List[ClassStandings]
 
 
 # --- Drivers ---

@@ -75,9 +75,18 @@ export interface DoubleRaceWinner {
   reverse_winner: string | null
 }
 
-export interface SeasonDetail extends SeasonSummary {
+export interface ClassStandings {
+  class_name: string
+  champion: string | null
   standings: DriverStanding[]
   race_winners: (SingleRaceWinner | DoubleRaceWinner)[]
+}
+
+export interface SeasonDetail extends SeasonSummary {
+  is_multiclass: boolean
+  standings: DriverStanding[]
+  race_winners: (SingleRaceWinner | DoubleRaceWinner)[]
+  classes: ClassStandings[]
 }
 
 export interface DriverSeasonSummary {
