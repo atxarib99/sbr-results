@@ -8,6 +8,12 @@ from ..database import get_db
 from ..aliases import load_alias_map, resolve_name
 from ..calc import compute_season_data
 from ..models import GlobalStats, Leaderboard, LeaderboardEntry, ChampionshipEntry
+from ..multiclass import (
+    load_points_map,
+    load_points_map_for_class,
+    load_driver_class_map,
+    load_classes_for_season,
+)
 
 router = APIRouter()
 
@@ -62,7 +68,7 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
     races_by_display:   dict[str, int] = {}
 
     seasons_meta = await db.execute(text(
-        "SELECT id, score_type, race_format, has_drop_round FROM seasons"
+        "SELECT id, score_type, race_format, has_drop_round, is_multiclass FROM seasons"
     ))
     all_seasons = seasons_meta.fetchall()
 
@@ -83,39 +89,54 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
         ), {"sid": season.id})
         num_rounds = nr_row.scalar() or 0
 
-        pm_rows = await db.execute(text(
-            "SELECT pse.finish_position, pse.points "
-            "FROM season_points_structure sps "
-            "JOIN points_structure_entries pse ON pse.structure_id = sps.structure_id "
-            "WHERE sps.season_id = :sid AND sps.class_id IS NULL"
-        ), {"sid": season.id})
-        pm_entries = pm_rows.fetchall()
-        points_map = {int(r.finish_position): float(r.points) for r in pm_entries} or None
-
-        standings, _ = compute_season_data(
-            results,
-            score_type=season.score_type,
-            race_format=season.race_format,
-            has_drop_round=bool(season.has_drop_round),
-            num_rounds=num_rounds,
-            points_map=points_map,
-        )
-
-        # Collect rounds for race counting
+        # Collect rounds entered per driver (used for race counts regardless of class)
         driver_rounds_entered: dict[str, set[int]] = {}
         for row in results:
             if row["value_numeric"] is not None or row["value_flag"] in ("dns", "dnf"):
-                raw = row["driver"]
-                driver_rounds_entered.setdefault(raw, set()).add(row["round_number"])
+                driver_rounds_entered.setdefault(row["driver"], set()).add(row["round_number"])
 
-        for s in standings:
-            raw = s["driver"]
-            display = resolve_name(raw, alias_map)
-            wins_by_display[display]    = wins_by_display.get(display, 0)    + s["wins"]
-            podiums_by_display[display] = podiums_by_display.get(display, 0) + s["podiums"]
-            races_by_display[display]   = (
-                races_by_display.get(display, 0) + len(driver_rounds_entered.get(raw, set()))
+        if season.is_multiclass:
+            driver_class_map = await load_driver_class_map(db, season.id)
+            season_classes = await load_classes_for_season(db, season.id)
+            for class_id, class_name in season_classes:
+                class_results = [r for r in results if driver_class_map.get(r["driver"]) == class_name]
+                if not class_results:
+                    continue
+                points_map = await load_points_map_for_class(db, season.id, class_id)
+                standings, _ = compute_season_data(
+                    class_results,
+                    score_type=season.score_type,
+                    race_format=season.race_format,
+                    has_drop_round=bool(season.has_drop_round),
+                    num_rounds=num_rounds,
+                    points_map=points_map,
+                )
+                for s in standings:
+                    raw = s["driver"]
+                    display = resolve_name(raw, alias_map)
+                    wins_by_display[display]    = wins_by_display.get(display, 0)    + s["wins"]
+                    podiums_by_display[display] = podiums_by_display.get(display, 0) + s["podiums"]
+                    races_by_display[display]   = (
+                        races_by_display.get(display, 0) + len(driver_rounds_entered.get(raw, set()))
+                    )
+        else:
+            points_map = await load_points_map(db, season.id)
+            standings, _ = compute_season_data(
+                results,
+                score_type=season.score_type,
+                race_format=season.race_format,
+                has_drop_round=bool(season.has_drop_round),
+                num_rounds=num_rounds,
+                points_map=points_map,
             )
+            for s in standings:
+                raw = s["driver"]
+                display = resolve_name(raw, alias_map)
+                wins_by_display[display]    = wins_by_display.get(display, 0)    + s["wins"]
+                podiums_by_display[display] = podiums_by_display.get(display, 0) + s["podiums"]
+                races_by_display[display]   = (
+                    races_by_display.get(display, 0) + len(driver_rounds_entered.get(raw, set()))
+                )
 
     total_wins    = sum(wins_by_display.values())
     total_podiums = sum(podiums_by_display.values())
@@ -149,7 +170,7 @@ async def get_leaderboard(db: AsyncSession = Depends(get_db)):
     champs_by_display:  dict[str, int] = {}
 
     seasons_meta = await db.execute(text(
-        "SELECT id, score_type, race_format, has_drop_round FROM seasons"
+        "SELECT id, score_type, race_format, has_drop_round, is_multiclass FROM seasons"
     ))
     all_seasons = seasons_meta.fetchall()
 
@@ -170,40 +191,54 @@ async def get_leaderboard(db: AsyncSession = Depends(get_db)):
         ), {"sid": season.id})
         num_rounds = nr_row.scalar() or 0
 
-        pm_rows = await db.execute(text(
-            "SELECT pse.finish_position, pse.points "
-            "FROM season_points_structure sps "
-            "JOIN points_structure_entries pse ON pse.structure_id = sps.structure_id "
-            "WHERE sps.season_id = :sid AND sps.class_id IS NULL"
-        ), {"sid": season.id})
-        pm_entries = pm_rows.fetchall()
-        points_map = {int(r.finish_position): float(r.points) for r in pm_entries} or None
-
-        standings, _ = compute_season_data(
-            results,
-            score_type=season.score_type,
-            race_format=season.race_format,
-            has_drop_round=bool(season.has_drop_round),
-            num_rounds=num_rounds,
-            points_map=points_map,
-        )
-
-        # Track participating drivers and season champion
+        # Track participating drivers (season_participants is per-season, reset each iteration)
         season_participants: set[str] = set()
-        for s in standings:
-            raw = s["driver"]
-            display = resolve_name(raw, alias_map)
-            season_participants.add(display)
-            wins_by_display[display]    = wins_by_display.get(display, 0)    + s["wins"]
-            podiums_by_display[display] = podiums_by_display.get(display, 0) + s["podiums"]
+
+        def _accumulate(standings: list[dict]) -> None:
+            for s in standings:
+                raw = s["driver"]
+                display = resolve_name(raw, alias_map)
+                season_participants.add(display)
+                wins_by_display[display]    = wins_by_display.get(display, 0)    + s["wins"]
+                podiums_by_display[display] = podiums_by_display.get(display, 0) + s["podiums"]
+
+        if season.is_multiclass:
+            driver_class_map = await load_driver_class_map(db, season.id)
+            season_classes = await load_classes_for_season(db, season.id)
+            for class_id, class_name in season_classes:
+                class_results = [r for r in results if driver_class_map.get(r["driver"]) == class_name]
+                if not class_results:
+                    continue
+                points_map = await load_points_map_for_class(db, season.id, class_id)
+                standings, _ = compute_season_data(
+                    class_results,
+                    score_type=season.score_type,
+                    race_format=season.race_format,
+                    has_drop_round=bool(season.has_drop_round),
+                    num_rounds=num_rounds,
+                    points_map=points_map,
+                )
+                _accumulate(standings)
+                if standings:
+                    champ_display = resolve_name(standings[0]["driver"], alias_map)
+                    champs_by_display[champ_display] = champs_by_display.get(champ_display, 0) + 1
+        else:
+            points_map = await load_points_map(db, season.id)
+            standings, _ = compute_season_data(
+                results,
+                score_type=season.score_type,
+                race_format=season.race_format,
+                has_drop_round=bool(season.has_drop_round),
+                num_rounds=num_rounds,
+                points_map=points_map,
+            )
+            _accumulate(standings)
+            if standings:
+                champ_display = resolve_name(standings[0]["driver"], alias_map)
+                champs_by_display[champ_display] = champs_by_display.get(champ_display, 0) + 1
 
         for display in season_participants:
             seasons_by_display[display] = seasons_by_display.get(display, 0) + 1
-
-        if standings:
-            champ_raw     = standings[0]["driver"]
-            champ_display = resolve_name(champ_raw, alias_map)
-            champs_by_display[champ_display] = champs_by_display.get(champ_display, 0) + 1
 
     wins_ranked    = _make_ranked(sorted(wins_by_display.items(),    key=lambda x: -x[1]))
     podiums_ranked = _make_ranked(sorted(podiums_by_display.items(), key=lambda x: -x[1]))

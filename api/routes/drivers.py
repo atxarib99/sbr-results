@@ -10,6 +10,12 @@ from ..database import get_db
 from ..aliases import load_alias_map, resolve_name
 from ..calc import compute_driver_season_stats
 from ..models import DriverProfile, DriverSeasonSummary
+from ..multiclass import (
+    load_points_map,
+    load_points_map_for_class,
+    load_driver_class_map,
+    load_classes_for_season,
+)
 
 router = APIRouter()
 
@@ -69,7 +75,7 @@ async def get_driver(name: str, db: AsyncSession = Depends(get_db)):
 
     # Load all seasons in order
     seasons_rows = await db.execute(text(
-        "SELECT id, name, display_name, score_type, race_format, has_drop_round "
+        "SELECT id, name, display_name, score_type, race_format, has_drop_round, is_multiclass "
         "FROM seasons ORDER BY sort_order"
     ))
     all_seasons = seasons_rows.fetchall()
@@ -105,24 +111,41 @@ async def get_driver(name: str, db: AsyncSession = Depends(get_db)):
         ), {"sid": season.id})
         num_rounds = nr_row.scalar() or 0
 
-        # Get points map
-        pm_rows = await db.execute(text(
-            "SELECT pse.finish_position, pse.points "
-            "FROM season_points_structure sps "
-            "JOIN points_structure_entries pse ON pse.structure_id = sps.structure_id "
-            "WHERE sps.season_id = :sid AND sps.class_id IS NULL"
-        ), {"sid": season.id})
-        pm_entries = pm_rows.fetchall()
-        points_map = {int(r.finish_position): float(r.points) for r in pm_entries} or None
+        if season.is_multiclass:
+            # Determine which class this driver belongs to in this season
+            driver_class_map = await load_driver_class_map(db, season.id)
+            driver_class: str | None = None
+            for raw in raw_names:
+                if raw in driver_class_map:
+                    driver_class = driver_class_map[raw]
+                    break
+            if driver_class is None:
+                continue  # driver not classified in this multiclass season
 
-        stats = compute_driver_season_stats(
-            results,
-            score_type=season.score_type,
-            race_format=season.race_format,
-            has_drop_round=bool(season.has_drop_round),
-            num_rounds=num_rounds,
-            points_map=points_map,
-        )
+            season_classes = await load_classes_for_season(db, season.id)
+            class_id = next((cid for cid, cname in season_classes if cname == driver_class), None)
+            points_map = await load_points_map_for_class(db, season.id, class_id) if class_id else None
+
+            # Only rank against drivers in the same class
+            class_results = [r for r in results if driver_class_map.get(r["driver"]) == driver_class]
+            stats = compute_driver_season_stats(
+                class_results,
+                score_type=season.score_type,
+                race_format=season.race_format,
+                has_drop_round=bool(season.has_drop_round),
+                num_rounds=num_rounds,
+                points_map=points_map,
+            )
+        else:
+            points_map = await load_points_map(db, season.id)
+            stats = compute_driver_season_stats(
+                results,
+                score_type=season.score_type,
+                race_format=season.race_format,
+                has_drop_round=bool(season.has_drop_round),
+                num_rounds=num_rounds,
+                points_map=points_map,
+            )
 
         # Merge stats from all raw names that match this driver
         # (in case same person used different names in the same season)
